@@ -1,0 +1,233 @@
+---
+title: "Predictions of classes for people who work out"
+author: "SANCHEZ Guilhem"
+date: "25/05/2020"
+output: html_document
+---
+
+In this project, the goal is to have the capacity to predict how well people do sport activities. We use datas from 6 participants.
+
+# I - Preprocessing the datas
+We must check datas and eliminate explanatory variables that are not interested, that lack of consistency for predicting final classes in the testing set.
+
+###     1 - Loading the libraries
+
+We load the necessary libraries that we will use in the project.
+```{r setup, message= FALSE, warning=FALSE}
+library(caret)
+library(corrplot)
+library(rpart)
+library(rattle)
+```
+
+###     2 - Loading the datas
+We can use online datas from different devices which give measures about people's performance for their sport exercices. Thus, we got a training and testing set thanks to the following link http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har and the *read.csv()* function.
+```{r, message= FALSE}
+
+training <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv")
+testing <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv")
+
+```
+
+###     3 - Removing zero variance predictors
+
+Here the goal is to see what are the predictors (explanatory variables) which can be assimilate to zero variance predictors. These predictors are not consistent so we remove then this kind of variables.
+```{r}
+#First, we see variables that have a very variability and will not be predictors
+training_nsv = nearZeroVar(training, saveMetrics = TRUE)
+testing_nsv = nearZeroVar(testing, saveMetrics = TRUE)
+
+#We delete all the columns that are marked like TRUE in the "nzv" column because this predictor is a near zero variance predictor
+training = training[,!training_nsv$nzv]
+testing = testing[,!testing_nsv$nzv]
+
+dim(training)
+dim(testing)
+
+```
+So, we have 100 variables in the training set, and 59 variables in the testing one.
+
+###     5 - Removing variables containing "NA"
+
+The goal is to reduce the number of variables again. Here we still have predictors which contain "NA" and are not useful, or can negatively affect our final predictions.
+```{r}
+training = training[ , colSums(is.na(training)) == 0]
+
+dim(training)
+```
+We finally have the same number of variables (59) in the training and testing sets.
+
+###     6 - Removing manually particular variables
+Here we have non-numerical and time variables which will not be useful for models we will apply. Also, they can disturb the regressions for the reason that only numerical factors are used.
+We are careful about the "classe" variable we do not have to remove in the training set, because we will use it for future predictions.
+```{r}
+
+training[,c("X","user_name","raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp", "num_window")] <- list(NULL)
+testing[,c("X","user_name","raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp", "num_window")] <- list(NULL)
+
+dim(training)
+dim(testing)
+```
+
+Finally, we own sets with 53 variables (**52 predictors**).
+
+###     7 - Correlation Matrix
+
+We show a matrix of correlations between remaining variables. For that, we use the library *corrplot* to create a chart displaying high and low correlations.
+
+In the correlation computation, we do not take the last column "classe" of the training set (53rd one), for 2 reasons :
+
+-> It is a non-numerical factor
+
+-> Above all, it is the variable we want to predict, so we do not have to take it into account
+  
+```{r}
+mat_correlation = cor(training[,-53])
+corrplot(mat_correlation, method="color", type="lower")
+```
+
+With the relative high number of variables, it is difficult to read them.
+But, we can generally see there are few predictors that are highly correlated. So the final results will not be very influenced by correlated explanatory variables.
+
+###     8 - Dimension
+For the last part of preprocessing, we put a dimension thanks to *set.seed()*. Thus, with the same value (33333), you will can have the same results as displayed in this HTML file, after having applied the next models.
+
+```{r}
+set.seed(33333)
+```
+
+# II - Applying the models
+
+In this part, we apply different models to finally use the better one, and predict the classes at the end.
+
+###     1 - Partitionning the training set
+At the end, we will be able to predict the classe of each of the 20 observations in the testing set. In order to build our models, we must separate our training set into a smaller one. It is the reason why we partition our training set into "trainingSample" (**75% of the training set**) and "testingSample" (**25%**).
+Indeed, "testingSample" will be used to test the accuracy of our models, before applying them to the real testing set.
+
+```{r}
+
+inTrain <- createDataPartition(training$classe, p=0.75, list=FALSE)
+trainingSample = training[inTrain,]
+testingSample = training[-inTrain,]
+
+dim(trainingSample)
+dim(testingSample)
+
+```
+
+Finally, "trainingSample" contains 14718 observations and "testingSample" holds 4904.
+
+###     2 - Classification Tree Model
+
+We focus on a decision tree as a first model to predict the observations placed in "testingSample".
+For this, we use the library *rpart* for applying the classification tree model to the trainingSample.
+
+Then, for a pretty classification tree we use the library *rattle* which brings the *fancrRpartPlot()* function.
+```{r, warning = FALSE}
+
+FitTree <- rpart(classe ~., data=trainingSample, method = "class")
+
+#We display the classification tree
+fancyRpartPlot(FitTree, sub = "Classification Tree")
+```
+The variables are not noticeable but the overall pattern of this classification tree gives us an idea about how variables are allocated in each tree.
+
+```{r, warning = FALSE}
+
+predictionTree <- predict(FitTree, newdata=testingSample, type="class")
+
+accuracyTree = postResample(predictionTree, testingSample$classe); accuracyTree
+```
+
+The prediction with this model has an accuracy of **73.59%**, thanks to the *postResample()* function from *cater* library. The root mean squared error is applied for determining this accuracy.
+
+We apply this model on real testing set, and we obtain:
+```{r}
+realTree = predict(FitTree, newdata=testing, type="class"); realTree
+```
+
+###     3 - Boosting Model
+
+The second model is the Boosting model ("gbm").
+For this, we use a cross-validation method with 5 resampled folds, thanks to the function *trainControl()*.
+```{r, warning = FALSE}
+
+#We put verbose with FALSE because the gbm method can produce a lot of outputs without saying the list is false
+FitBoosting = train(classe ~., data = trainingSample, method ="gbm", verbose = FALSE,
+                    trControl = trainControl(method = "cv", 5))
+
+predictBoosting = predict(FitBoosting, newdata = testingSample)
+
+BoostingTable = table(predictBoosting, testingSample$classe); BoostingTable
+```
+BoostingTable shows us that the major part of the predictions are right (we see the number in the diagonal).
+
+```{r, warning = FALSE}
+
+sum(predictBoosting != testingSample$classe)
+
+```
+We got only 186 cases where predictions are not the same as values in *testingSample*, so which are not good.
+
+```{r, warning = FALSE}
+
+accuracyBoosting = postResample(predictBoosting, testingSample$classe); accuracyBoosting
+
+```
+*FitBoosting()* chooses a method with 150 trees for a better accuracy. Indeed, we have **96.41%**.
+
+We apply this model on real testing set, and we obtain:
+```{r}
+realBoosting = predict(FitBoosting, newdata=testing); realBoosting
+```
+
+###     4 - Linear Discriminant Analysis and Naive Bayes models
+
+The last 2 models are the Linear Discriminant Analysis and the Naive Bayes methods. With the same cross-validation technique as before, we want to see if one of these models leads to a better accuracy of prediction.
+```{r, warning = FALSE}
+
+#lda is for linear discriminant analysis
+FitLDA = train(classe ~., data=trainingSample, method="lda",
+               trControl = trainControl(method = "cv", 5))
+predictionLDA = predict(FitLDA, newdata = testingSample)
+
+#nb is for Naives Bayes
+FitNB = train(classe ~., data=trainingSample, method="nb",
+              trControl = trainControl(method = "cv", 5))
+predictionNB = predict(FitNB, newdata = testingSample)
+
+
+accuracyLDA = postResample(predictionLDA, testingSample$classe); accuracyLDA
+accuracyNB = postResample(predictionNB, testingSample$classe); accuracyNB
+
+
+```
+The Linear Discriminant Analysis gives an accuracy of **69.94%**, whereas with the Naive Bayes method we got better one that is **74.82%**.
+
+With the Linear Discriminant Analysis model, we have results on the testing set:
+```{r, warning = FALSE}
+realLDA = predict(FitLDA, newdata = testing);realLDA
+```
+
+
+Concerning the Naive Bayes model, the predictions on the testing set are:
+```{r, warning = FALSE}
+realNB = predict(FitNB, newdata = testing);realNB
+```
+
+But these two last models do not give a better accuracy than the Boosting method.
+
+# III - Conclusion
+
+The better prediction accuracy is given by the **Boosting model**. So, we necessarily apply it to the testing set as we did before.
+
+Here are the predictions for the 20 observations of the testing set, with an accuracy of **96.41%**.
+```{r}
+realBoosting
+```
+
+We display a chart which shows with intuition the previous result:
+```{r}
+qplot((1:20), realBoosting, colour=realBoosting,
+      xlab = "Observation Number", ylab = "Prediction of the classe")
+```
